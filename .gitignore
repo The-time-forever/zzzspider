@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# VS Code
+.vscode/
+
+# Project Data
+downloads/
+data/
+downloads_scroll_ver/
+data_scroll_ver/
+
+# Logs
+*.log
