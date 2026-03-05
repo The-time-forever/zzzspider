@@ -8,11 +8,26 @@ venv/
 # VS Code
 .vscode/
 
-# Project Data
+# Project Data & Downloads
 downloads/
 data/
 downloads_scroll_ver/
 data_scroll_ver/
+ZZZ_Miyoushe_Cloud_Download/
+ZZZ_Miyoushe_Cloud_Download_MT/
 
 # Logs
 *.log
+
+# Cookies (sensitive data)
+*cookies*.json
+
+# Temporary files
+*.tmp
+*.temp
+cookie.txt
+outputlog.txt
+
+# OS
+.DS_Store
+Thumbs.db
