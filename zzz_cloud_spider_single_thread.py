@@ -8,25 +8,26 @@ from urllib.parse import urljoin, urlparse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # ================= 配置区域 =================
-# 是否无头模式 (True=不显示浏览器, False=显示)
-HEADLESS = False
-# 操作减速 (毫秒)
-SLOW_MO = 100
 # 目录页入口
 CATALOG_URL = "https://zzz.mihoyo.com/news?utm_source=oolandingpage"
-# 基础数据存目录
-DATA_DIR = "d:/Users/22542/Desktop/zzzspider/data"
-# 下载保存目录
-DOWNLOAD_ROOT = "d:/Users/22542/Desktop/zzzspider/downloads"
-# 最大处理新闻数 (设置为 None 则处理所有采集到的)
-MAX_NEWS_LIMIT = None 
+# 数据保存路径 (相对路径 - ZZZ_Mihoyo_Cloud_Download)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+BASE_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "ZZZ_Mihoyo_Cloud_Download")
+DATA_DIR = os.path.join(BASE_OUTPUT_DIR, "data")
+DOWNLOAD_ROOT = os.path.join(BASE_OUTPUT_DIR, "downloads")
+
+# 爬取配置
+MAX_NEWS_LIMIT = None   # 最大处理新闻数 (设置为 None 则处理所有采集到的)
+HEADLESS = True         # 无头模式运行
+SLOW_MO = 100           # 操作减速 (毫秒)
 # ===========================================
 
 # 确保目录存在
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
-if not os.path.exists(DOWNLOAD_ROOT):
-    os.makedirs(DOWNLOAD_ROOT)
+def ensure_dirs():
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+    if not os.path.exists(DOWNLOAD_ROOT):
+        os.makedirs(DOWNLOAD_ROOT)
 
 def sanitize_filename(name, max_length=80):
     """清理文件名/文件夹名"""
@@ -198,61 +199,6 @@ def download_content(page, local_dir):
         
     return mode, downloaded_files
 
-# ==============================================================================
-# Helper: Folder Mapping Manager
-# ==============================================================================
-FOLDER_MAP_FILE = os.path.join(DATA_DIR, "folder_map.json")
-
-def get_assigned_folder(cloud_url, suggested_name, root_dir):
-    """
-    根据云盘 URL 获取固定的本地文件夹路径。
-    如果已存在映射，则复用；否则分配新名（处理重名）并保存映射。
-    """
-    # 1. 加载映射
-    mapping = {}
-    if os.path.exists(FOLDER_MAP_FILE):
-        try:
-            with open(FOLDER_MAP_FILE, 'r', encoding='utf-8') as f:
-                mapping = json.load(f)
-        except: pass
-    
-    # 2. 检查是否已分配
-    # 使用 url 的 path 部分作为 key 避免 query 参数干扰
-    map_key = cloud_url
-    
-    if map_key in mapping:
-        assigned_path = mapping[map_key]
-        return assigned_path
-    
-    # 3. 分配新路径
-    base_path = os.path.join(root_dir, suggested_name)
-    final_path = base_path
-    
-    # 获取所有已经被占用的路径集合
-    used_paths = set(p.lower().replace('\\', '/') for p in mapping.values())
-    
-    counter = 1
-    # 冲突检测：路径物理存在 OR 路径已被其他 URL 预占
-    while True:
-        check_path_norm = final_path.lower().replace('\\', '/')
-        is_physically_exists = os.path.exists(final_path) and os.listdir(final_path) # 存在且非空
-        is_reserved = check_path_norm in used_paths
-        
-        if not is_physically_exists and not is_reserved:
-            break
-            
-        final_path = f"{base_path}_{counter:02d}"
-        counter += 1
-        
-    # 4. 保存映射
-    mapping[map_key] = final_path
-    try:
-        with open(FOLDER_MAP_FILE, 'w', encoding='utf-8') as f:
-            json.dump(mapping, f, indent=2, ensure_ascii=False)
-    except: pass
-    
-    return final_path
-
 def process_news_detail(page, news_url, output_root):
     """处理单个新闻详情页"""
     result = {
@@ -262,55 +208,84 @@ def process_news_detail(page, news_url, output_root):
         "status": "success",
         "error_msg": ""
     }
-    
+
     try:
         print(f"  > [Detail] 打开新闻页: {news_url}")
         page.goto(news_url, wait_until="domcontentloaded", timeout=45000)
         try:
             page.wait_for_load_state("networkidle", timeout=5000)
         except: pass
-        
+
+        # 获取新闻标题
+        news_title = ""
+        try:
+            title_element = page.locator("h1, .article-title, .post-title").first
+            if title_element.is_visible():
+                news_title = title_element.inner_text().strip()
+        except:
+            news_title = page.title().strip()
+
         text = page.inner_text("body")
         cloud_links, pwds = extract_from_text(text)
         result["cloud_links_found"] = cloud_links
-        
+
         if not cloud_links:
             print("    -> 无云盘链接")
             return result
 
         print(f"    -> 找到 {len(cloud_links)} 个云盘链接")
+        print(f"    -> 新闻标题: {news_title}")
         
         for link in cloud_links:
             disk_res = {
-                "url": link, 
-                "pwd": None, 
-                "mode": "pending", 
+                "url": link,
+                "pwd": None,
+                "mode": "pending",
                 "local_folder": None,
                 "files": []
             }
-            
+
             # 记录是否创建了文件夹，以便回滚
             created_dir_path = None
 
             try:
                 page.goto(link, wait_until="domcontentloaded", timeout=45000)
                 time.sleep(1)
-                
+
                 used_pwd = attempt_cloud_login(page, pwds)
                 disk_res["pwd"] = used_pwd
-                
+
                 try:
                     page.wait_for_load_state("networkidle", timeout=5000)
                 except: pass
-                
-                # 确定文件夹名 (使用映射表管理)
-                folder_name = determine_local_folder(page, link)
-                local_path = get_assigned_folder(link, folder_name, output_root)
-                
+
+                # 使用新闻标题作为文件夹名
+                clean_title = news_title.strip()
+                # 移除常见的日期格式
+                clean_title = re.sub(r'\s+\d{4}-\d{2}-\d{2}$', '', clean_title)
+                clean_title = re.sub(r'\s+\d{2}-\d{2}$', '', clean_title)
+                clean_title = re.sub(r'\s+\d+小时前$', '', clean_title)
+                clean_title = re.sub(r'\s+\d+天前$', '', clean_title)
+
+                folder_name = sanitize_filename(clean_title) if clean_title else f"news_{int(time.time())}"
+
+                # 直接使用帖子标题作为文件夹名，不使用映射机制
+                local_path = os.path.join(output_root, folder_name)
+
+                # 如果文件夹已存在且非空，添加序号避免覆盖
+                if os.path.exists(local_path) and os.listdir(local_path):
+                    counter = 1
+                    while True:
+                        new_path = f"{local_path}_{counter:02d}"
+                        if not os.path.exists(new_path) or not os.listdir(new_path):
+                            local_path = new_path
+                            break
+                        counter += 1
+
                 if not os.path.exists(local_path):
                     os.makedirs(local_path)
                 created_dir_path = local_path
-                
+
                 disk_res["local_folder"] = local_path
                 print(f"    -> [Disk] 下载到: {local_path}")
                 
@@ -522,7 +497,8 @@ def collect_news_urls(page, catalog_url):
 
 def main():
     print("=== 全站采集脚本启动 ===")
-    
+    ensure_dirs()
+
     # 1. 准备断点记录
     processed_file = os.path.join(DATA_DIR, "processed_news.json")
     results_file = os.path.join(DATA_DIR, "results.json")

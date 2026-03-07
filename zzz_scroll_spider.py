@@ -24,7 +24,7 @@ COOKIES_FILE = os.path.join(DATA_DIR, "miyoushe_cookies.json")  # Cookie保存�
 MAX_SCROLL_ATTEMPTS = 1000  # 最大滚动次数 (增加以获取更多数据)
 SCROLL_PAUSE_TIME = 2.0    # 每次滚动后等待时间(秒)
 NO_NEW_DATA_LIMIT = 5      # 连续N次滚动没有新内容则停止
-HEADLESS = False           # 显示浏览器以便观察滚动效果
+HEADLESS = True            # 无头模式运行
 MAX_PROCESS_LIMIT = 5000   # 最大详情页处理数 (不限数量)
 SLOW_MO = 100              # 下载时的操作延迟
 

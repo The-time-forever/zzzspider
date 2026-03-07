@@ -9,10 +9,8 @@ venv/
 .vscode/
 
 # Project Data & Downloads
-downloads/
-data/
-downloads_scroll_ver/
-data_scroll_ver/
+ZZZ_Mihoyo_Cloud_Download/
+ZZZ_Mihoyo_Cloud_Download_MT/
 ZZZ_Miyoushe_Cloud_Download/
 ZZZ_Miyoushe_Cloud_Download_MT/
 
