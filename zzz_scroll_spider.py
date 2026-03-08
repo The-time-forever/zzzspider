@@ -18,7 +18,7 @@ DATA_DIR = os.path.join(BASE_OUTPUT_DIR, "data")
 DOWNLOAD_ROOT = os.path.join(BASE_OUTPUT_DIR, "downloads")
 OUTPUT_FILE = os.path.join(DATA_DIR, "scroll_spider_results.jsonl")
 ERROR_LOG_FILE = os.path.join(BASE_OUTPUT_DIR, "spider_error.log")
-COOKIES_FILE = os.path.join(DATA_DIR, "miyoushe_cookies.json")  # Cookie保存文件
+COOKIES_FILE = os.path.join(PROJECT_ROOT, "miyoushe_cookies.json")  # 根目录cookie文件
 
 # 爬取配置
 MAX_SCROLL_ATTEMPTS = 1000  # 最大滚动次数 (增加以获取更多数据)
@@ -88,6 +88,7 @@ def save_record(record):
 
 def sanitize_filename(name, max_length=80):
     """清理文件名/文件夹名"""
+    name = name.replace('\n', ' ').replace('\r', ' ')
     name = re.sub(r'[\\/:*?"<>|]', '_', name)
     name = re.sub(r'\s+', ' ', name).strip()
     return name[:max_length]

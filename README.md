@@ -73,65 +73,63 @@
     *   下载目录: `ZZZ_Mihoyo_Cloud_Download_MT/downloads/`
 
 ### 方案 B：米游社网站爬虫（推荐）
-针对 [米游社绝区零板块](https://www.miyoushe.com/zzz)，提供单线程和多线程两种版本。
+针对 [米游社绝区零板块](https://www.miyoushe.com/zzz)。
 
-#### B1. 单线程版本（稳定）
-适合网络不稳定或需要观察运行过程的场景。
+**运行命令**
+```bash
+python zzz_scroll_spider.py
+```
 
-1.  **运行命令**
-    ```bash
-    python zzz_scroll_spider.py
-    ```
-2.  **数据存放**
-    *   数据目录: `ZZZ_Miyoushe_Cloud_Download/data/`
-    *   下载目录: `ZZZ_Miyoushe_Cloud_Download/downloads/`
+**数据存放**
+- 数据目录: `ZZZ_Miyoushe_Cloud_Download/data/`
+- 下载目录: `ZZZ_Miyoushe_Cloud_Download/downloads/`
 
-#### B2. 多线程版本（高效）⚡
-使用异步并发，同时处理3篇文章，速度提升约3倍。
-
-1.  **运行命令**
-    ```bash
-    python zzz_scroll_spider_mt_new.py
-    ```
-2.  **数据存放**
-    *   数据目录: `ZZZ_Miyoushe_Cloud_Download_MT/data/`
-    *   下载目录: `ZZZ_Miyoushe_Cloud_Download_MT/downloads/`
-3.  **配置调整**
-    *   `CONCURRENCY_LIMIT = 3`: 并发数量（可根据网络情况调整）
+**特点**
+- 稳定可靠，适合网络不稳定或需要观察运行过程的场景
+- Cookie自动管理，绕过风控
+- 404自动跳过，不中断程序
+- 使用帖子标题命名文件夹
 
 ## 配置调整
 可在脚本头部调整变量：
 *   `HEADLESS = True`: 无头模式运行（不显示浏览器窗口）
 *   `MAX_PROCESS_LIMIT = 5000`: 限制采集数量
-*   `CONCURRENCY_LIMIT = 3`: 多线程版本的并发数量（仅多线程版本）
 *   `COOKIES_FILE`: Cookie保存位置（自动管理）
 
-## 首次使用说明
+## Cookie配置说明
 
-1. **首次运行米游社爬虫**：
-   - 程序会自动打开浏览器
-   - 如果检测到需要登录，会提示你手动扫码登录
-   - 登录成功后按回车，程序会自动保存登录状态
-   - 下次运行会自动使用保存的Cookie，无需重复登录
+> **注意**: `cookie.txt` 和 `miyoushe_cookies.json` 均已加入 `.gitignore`，不会被提交到仓库，请妥善保管。
 
-2. **Cookie文件位置**：
-   - 单线程版本：`ZZZ_Miyoushe_Cloud_Download/data/miyoushe_cookies.json`
-   - 多线程版本：`ZZZ_Miyoushe_Cloud_Download_MT/data/miyoushe_cookies.json`
+详细配置步骤请参考 [COOKIE_SETUP.md](COOKIE_SETUP.md)。
+
+### 快速配置
+
+1. 登录 [米游社](https://www.miyoushe.com)，打开F12控制台，执行 `export_cookies.js` 中的代码
+2. 将输出的JSON保存为项目根目录下的 `cookie.txt`
+3. 运行转换工具：
+   ```bash
+   python convert_cookies.py
+   ```
+   工具会自动将 `cookie.txt` 转换为爬虫所需格式，保存到两个爬虫的数据目录中。
+
+### Cookie文件位置
+
+- 转换后的cookie文件：`miyoushe_cookies.json`（项目根目录）
+- 原始导出文件：`cookie.txt`（项目根目录，本地保留，不上传）
 
 ## 目录结构
 
 ### 主要脚本文件
 *   `zzz_cloud_spider_single_thread.py`: 绝区零官方网站爬虫（单线程版本）
 *   `zzz_cloud_spider_multi_thread.py`: 绝区零官方网站爬虫（多线程版本）
-*   `zzz_scroll_spider.py`: 米游社网站爬虫（单线程，最新版本）⭐
-*   `zzz_scroll_spider_mt_new.py`: 米游社网站爬虫（多线程，最新版本）⚡
+*   `zzz_scroll_spider.py`: 米游社网站爬虫（最新版本）⭐
 *   `export_cookies.js`: Cookie导出辅助脚本
+*   `convert_cookies.py`: Cookie格式转换工具
 
 ### 数据目录
 *   `ZZZ_Mihoyo_Cloud_Download/`: 官方网站爬虫的数据和下载目录
 *   `ZZZ_Mihoyo_Cloud_Download_MT/`: 官方网站爬虫（多线程）的数据和下载目录
-*   `ZZZ_Miyoushe_Cloud_Download/`: 米游社爬虫（单线程）的数据和下载目录
-*   `ZZZ_Miyoushe_Cloud_Download_MT/`: 米游社爬虫（多线程）的数据和下载目录
+*   `ZZZ_Miyoushe_Cloud_Download/`: 米游社爬虫的数据和下载目录
 
 ##以此项目供学习交流使用
 
@@ -151,12 +149,10 @@
 | `zzz_cloud_spider_single_thread.py` | 绝区零官网 | 翻页按钮 | 单线程 | 稳定可靠 |
 | `zzz_cloud_spider_multi_thread.py` | 绝区零官网 | 翻页按钮 | 多线程 | 速度更快 |
 | `zzz_scroll_spider.py` | 米游社 | 页面滚动 | 单线程 | 最新功能，稳定 ⭐ |
-| `zzz_scroll_spider_mt_new.py` | 米游社 | 页面滚动 | 3并发 | 最新功能，高效 ⚡ |
 
 **推荐使用**：
 - 采集官网资讯：`zzz_cloud_spider_single_thread.py` 或 `zzz_cloud_spider_multi_thread.py`
-- 采集米游社资讯（稳定）：`zzz_scroll_spider.py`
-- 采集米游社资讯（快速）：`zzz_scroll_spider_mt_new.py`
+- 采集米游社资讯：`zzz_scroll_spider.py`
 
 **最新版本特性**：
 - ✅ Cookie自动管理，绕过风控
