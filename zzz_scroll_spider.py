@@ -28,6 +28,18 @@ HEADLESS = True            # 无头模式运行
 MAX_PROCESS_LIMIT = 5000   # 最大详情页处理数 (不限数量)
 SLOW_MO = 100              # 下载时的操作延迟
 
+# 统计信息
+STATS = {
+    "total_articles": 0,
+    "articles_with_cloud": 0,
+    "download_success": 0,
+    "download_failed": 0,
+    "page_anomaly": 0,
+    "no_button": 0,
+    "404_errors": 0,
+    "skipped_existing": 0
+}
+
 # ================= 工具函数 =================
 def ensure_dirs():
     if not os.path.exists(DATA_DIR):
@@ -270,103 +282,197 @@ def determine_local_folder(page, url):
 
     return sanitize_filename(folder_name)
 
+def check_page_anomaly(page):
+    """检测页面异常状态（验证码、登录页、限流等）"""
+    try:
+        page_title = page.title()
+        page_text = page.inner_text("body")[:1000]  # 取前1000字符检查
+        page_url = page.url
+
+        # 异常关键词检测
+        anomaly_keywords = {
+            "验证码": ["验证码", "captcha", "CAPTCHA", "人机验证", "滑动验证"],
+            "登录": ["请登录", "登录后查看", "需要登录", "login required"],
+            "限流": ["访问频繁", "请稍后再试", "too many requests", "rate limit", "系统繁忙"],
+            "权限": ["无权限", "权限不足", "access denied", "forbidden"],
+            "404": ["404", "页面不存在", "not found", "偏离了地球"]
+        }
+
+        detected_issues = []
+        for issue_type, keywords in anomaly_keywords.items():
+            if any(kw in page_title.lower() or kw in page_text.lower() for kw in keywords):
+                detected_issues.append(issue_type)
+
+        if detected_issues:
+            print(f"      [异常检测] 发现页面异常: {', '.join(detected_issues)}")
+            print(f"      [异常检测] 页面标题: {page_title}")
+            print(f"      [异常检测] 页面URL: {page_url}")
+            return True, detected_issues
+
+        return False, []
+    except Exception as e:
+        print(f"      [异常检测] 检测失败: {e}")
+        return False, []
+
 def download_content(page, local_dir):
-    """核心下载逻辑：只尝试ZIP打包下载"""
+    """核心下载逻辑：只尝试ZIP打包下载（增强版：重试+日志+异常检测）"""
     downloaded_files = []
     mode = "failed"
 
-    # 等待页面加载完成
-    time.sleep(2)
+    MAX_RETRIES = 3  # 最大重试次数
+    WAIT_TIME = 5    # 初始等待时间（秒）
 
-    # 查找ZIP打包下载按钮
-    print("      [ZIP] 正在查找ZIP打包下载按钮...")
-    target_btn = None
+    for attempt in range(MAX_RETRIES):
+        print(f"      [尝试 {attempt + 1}/{MAX_RETRIES}] 开始处理...")
 
-    # 策略1: 查找所有按钮和链接，检查文本内容
-    try:
-        all_buttons = page.locator("button, a, div[role='button']").all()
-        print(f"      [ZIP] 页面共有 {len(all_buttons)} 个可点击元素")
+        # 等待页面加载完成（逐步增加等待时间）
+        wait_time = WAIT_TIME + (attempt * 2)  # 第一次5秒，第二次7秒，第三次9秒
+        print(f"      [等待] 等待页面加载 {wait_time} 秒...")
+        time.sleep(wait_time)
 
-        zip_keywords = ["打包下载", "全部下载", "下载全部", "zip", "ZIP", "打包", "批量下载"]
+        # === 新增：页面异常检测 ===
+        is_anomaly, issues = check_page_anomaly(page)
+        if is_anomaly:
+            print(f"      [异常] 检测到页面异常，停止下载: {issues}")
+            mode = f"page_anomaly_{','.join(issues)}"
 
-        for btn in all_buttons:
+            # 保存截图用于调试
             try:
-                if not btn.is_visible():
+                screenshot_path = os.path.join(local_dir, f"error_screenshot_{int(time.time())}.png")
+                page.screenshot(path=screenshot_path)
+                print(f"      [调试] 已保存错误截图: {screenshot_path}")
+            except:
+                pass
+
+            return mode, downloaded_files
+
+        # === 详细日志：页面基本信息 ===
+        try:
+            page_title = page.title()
+            page_url = page.url
+            print(f"      [页面信息] 标题: {page_title[:50]}...")
+            print(f"      [页面信息] URL: {page_url}")
+        except Exception as e:
+            print(f"      [页面信息] 获取失败: {e}")
+
+        # 查找ZIP打包下载按钮
+        print("      [ZIP] 正在查找ZIP打包下载按钮...")
+        target_btn = None
+
+        # 策略1: 查找所有按钮和链接，检查文本内容
+        try:
+            all_buttons = page.locator("button, a, div[role='button']").all()
+            print(f"      [ZIP] 页面共有 {len(all_buttons)} 个可点击元素")
+
+            zip_keywords = ["打包下载", "全部下载", "下载全部", "zip", "ZIP", "打包", "批量下载"]
+
+            # === 新增：详细日志 - 列出所有可见按钮 ===
+            visible_buttons = []
+            for btn in all_buttons:
+                try:
+                    if not btn.is_visible():
+                        continue
+
+                    text = btn.inner_text().strip()
+                    visible_buttons.append(text)
+
+                    # 检查是否包含关键词
+                    if any(keyword in text for keyword in zip_keywords):
+                        print(f"      [ZIP] ✓ 找到候选按钮: '{text}'")
+                        target_btn = btn
+                        break
+                except:
                     continue
 
-                text = btn.inner_text().strip()
+            if not target_btn and visible_buttons:
+                print(f"      [ZIP] 可见按钮列表 (前10个): {visible_buttons[:10]}")
 
-                # 检查是否包含关键词
-                if any(keyword in text for keyword in zip_keywords):
-                    print(f"      [ZIP] 找到候选按钮: '{text}'")
-                    target_btn = btn
-                    break
-            except:
-                continue
-
-    except Exception as e:
-        print(f"      [ZIP] 查找按钮时出错: {e}")
-
-    # 策略2: 如果策略1没找到，尝试通过CSS选择器
-    if not target_btn:
-        print("      [ZIP] 策略1未找到，尝试CSS选择器...")
-        selectors = [
-            "button:has-text('打包')",
-            "button:has-text('下载')",
-            "a:has-text('打包')",
-            "a:has-text('ZIP')",
-            "[class*='download'][class*='all']",
-            "[class*='batch'][class*='download']"
-        ]
-
-        for selector in selectors:
-            try:
-                elements = page.locator(selector).all()
-                for elem in elements:
-                    if elem.is_visible():
-                        text = elem.inner_text().strip()
-                        print(f"      [ZIP] CSS选择器找到: '{text}'")
-                        target_btn = elem
-                        break
-                if target_btn:
-                    break
-            except:
-                continue
-
-    if target_btn:
-        print(f"      [ZIP] 发现打包下载按钮，开始下载...")
-        try:
-            with page.expect_download(timeout=60000) as download_info:
-                target_btn.click()
-
-            download = download_info.value
-            safe_name = sanitize_filename(download.suggested_filename)
-            save_path = os.path.join(local_dir, safe_name)
-            download.save_as(save_path)
-            print(f"      [ZIP] 下载完成: {safe_name}")
-
-            # 解压处理
-            if zipfile.is_zipfile(save_path):
-                try:
-                    with zipfile.ZipFile(save_path, 'r') as zf:
-                        zf.extractall(local_dir)
-                        downloaded_files.extend(zf.namelist())
-                    os.remove(save_path) # 删除原 ZIP
-                    mode = "zip_extracted"
-                    print(f"      [ZIP] 解压成功，共 {len(downloaded_files)} 个文件")
-                except Exception as e:
-                    print(f"      [ZIP] 解压失败: {e}")
-                    downloaded_files.append(safe_name)
-                    mode = "zip_raw"
-            else:
-                downloaded_files.append(safe_name)
-                mode = "zip_file"
         except Exception as e:
-            print(f"      [ZIP] 下载流程异常: {e}")
-            mode = "failed"
-    else:
-        print("      [ZIP] 未找到ZIP打包下载按钮")
-        mode = "no_zip_button"
+            print(f"      [ZIP] 查找按钮时出错: {e}")
+
+        # 策略2: 如果策略1没找到，尝试通过CSS选择器
+        if not target_btn:
+            print("      [ZIP] 策略1未找到，尝试CSS选择器...")
+            selectors = [
+                "button:has-text('打包')",
+                "button:has-text('下载')",
+                "a:has-text('打包')",
+                "a:has-text('ZIP')",
+                "[class*='download'][class*='all']",
+                "[class*='batch'][class*='download']"
+            ]
+
+            for selector in selectors:
+                try:
+                    elements = page.locator(selector).all()
+                    for elem in elements:
+                        if elem.is_visible():
+                            text = elem.inner_text().strip()
+                            print(f"      [ZIP] CSS选择器找到: '{text}'")
+                            target_btn = elem
+                            break
+                    if target_btn:
+                        break
+                except:
+                    continue
+
+        # 如果找到按钮，尝试下载
+        if target_btn:
+            print(f"      [ZIP] 发现打包下载按钮，开始下载...")
+            try:
+                with page.expect_download(timeout=60000) as download_info:
+                    target_btn.click()
+
+                download = download_info.value
+                safe_name = sanitize_filename(download.suggested_filename)
+                save_path = os.path.join(local_dir, safe_name)
+                download.save_as(save_path)
+                print(f"      [ZIP] 下载完成: {safe_name}")
+
+                # 解压处理
+                if zipfile.is_zipfile(save_path):
+                    try:
+                        with zipfile.ZipFile(save_path, 'r') as zf:
+                            zf.extractall(local_dir)
+                            downloaded_files.extend(zf.namelist())
+                        os.remove(save_path) # 删除原 ZIP
+                        mode = "zip_extracted"
+                        print(f"      [ZIP] 解压成功，共 {len(downloaded_files)} 个文件")
+                    except Exception as e:
+                        print(f"      [ZIP] 解压失败: {e}")
+                        downloaded_files.append(safe_name)
+                        mode = "zip_raw"
+                else:
+                    downloaded_files.append(safe_name)
+                    mode = "zip_file"
+
+                # 下载成功，退出重试循环
+                return mode, downloaded_files
+
+            except Exception as e:
+                print(f"      [ZIP] 下载流程异常: {e}")
+                if attempt < MAX_RETRIES - 1:
+                    print(f"      [重试] 将在 3 秒后重试...")
+                    time.sleep(3)
+                    continue
+                else:
+                    mode = "download_failed"
+        else:
+            print(f"      [ZIP] 未找到ZIP打包下载按钮")
+            if attempt < MAX_RETRIES - 1:
+                print(f"      [重试] 将在 3 秒后重试...")
+                time.sleep(3)
+                continue
+            else:
+                mode = "no_zip_button"
+
+                # === 最后一次尝试失败，保存截图 ===
+                try:
+                    screenshot_path = os.path.join(local_dir, f"no_button_screenshot_{int(time.time())}.png")
+                    page.screenshot(path=screenshot_path)
+                    print(f"      [调试] 已保存调试截图: {screenshot_path}")
+                except:
+                    pass
 
     return mode, downloaded_files
 
@@ -425,16 +531,61 @@ def extract_cloud_info_from_text(text):
     # 合并去重
     return list(set(minas_links + other_links)), list(set(codes))
 
+def check_if_already_downloaded(title):
+    """检查该帖子是否已经下载过"""
+    # 清理标题（与下载时的逻辑保持一致）
+    clean_title = title.strip()
+    clean_title = re.sub(r'\s+\d{4}-\d{2}-\d{2}$', '', clean_title)
+    clean_title = re.sub(r'\s+\d{2}-\d{2}$', '', clean_title)
+    clean_title = re.sub(r'\s+\d+小时前$', '', clean_title)
+    clean_title = re.sub(r'\s+\d+天前$', '', clean_title)
+
+    folder_name = sanitize_filename(clean_title)
+    expected_path = os.path.join(DOWNLOAD_ROOT, folder_name)
+
+    # 检查文件夹是否存在且非空
+    if os.path.exists(expected_path) and os.path.isdir(expected_path):
+        contents = os.listdir(expected_path)
+        # 过滤掉截图文件，只检查实际下载的内容
+        actual_files = [f for f in contents if not f.startswith('error_screenshot_') and not f.startswith('no_button_screenshot_')]
+        if actual_files:
+            return True, expected_path
+
+    # 检查是否有带序号的文件夹（如 folder_name_01, folder_name_02）
+    if os.path.exists(DOWNLOAD_ROOT):
+        for item in os.listdir(DOWNLOAD_ROOT):
+            item_path = os.path.join(DOWNLOAD_ROOT, item)
+            if os.path.isdir(item_path):
+                # 检查是否匹配 folder_name 或 folder_name_XX 格式
+                if item == folder_name or re.match(rf'^{re.escape(folder_name)}_\d{{2}}$', item):
+                    contents = os.listdir(item_path)
+                    actual_files = [f for f in contents if not f.startswith('error_screenshot_') and not f.startswith('no_button_screenshot_')]
+                    if actual_files:
+                        return True, item_path
+
+    return False, None
+
 def process_single_article(context, browser, article_url, title):
     """(Refactored) 处理单个详情页，包含提取云盘链接和下载"""
+    global STATS
+    STATS["total_articles"] += 1
+
+    # === 新增：检查是否已经下载过 ===
+    already_downloaded, existing_path = check_if_already_downloaded(title)
+    if already_downloaded:
+        STATS["skipped_existing"] += 1
+        print(f"  [Skip] 已存在: {title[:30]}... -> {existing_path}")
+        return
+
     worker_page = None
     try:
         worker_page = context.new_page()
         print(f"  [Processing] 分析: {title[:30]}...")
-        
+
         # 访问详情页
         response = worker_page.goto(article_url, wait_until="domcontentloaded", timeout=45000)
         if response and response.status == 404:
+            STATS["404_errors"] += 1
             log_404_skip(article_url, "文章详情页返回404", title)
             return
 
@@ -466,6 +617,7 @@ def process_single_article(context, browser, article_url, title):
                 except: pass
 
             if is_soft_404:
+                STATS["404_errors"] += 1
                 log_404_skip(article_url, "文章详情页Soft 404检测", title)
                 return
         except Exception: 
@@ -487,6 +639,7 @@ def process_single_article(context, browser, article_url, title):
              # print("    -> 无云盘链接")
              return
 
+        STATS["articles_with_cloud"] += 1
         print(f"    -> 发现云盘链接: {len(all_cloud_links)} 个")
         
         # 开始下载流程
@@ -527,7 +680,14 @@ def process_single_article(context, browser, article_url, title):
                         continue
 
                 # 在 cloud_page 上执行后续操作
-                time.sleep(1)
+                print(f"      [云盘] 等待页面稳定...")
+                time.sleep(2)
+
+                # === 增强：云盘页面异常检测 ===
+                try:
+                    cloud_page.wait_for_load_state("domcontentloaded", timeout=10000)
+                except Exception as e:
+                    print(f"      [云盘] 页面加载超时: {e}")
 
                 # 检测 404 (如果是点击进来的，response 对象可能拿不到，检查标题或内容)
                 if "404" in cloud_page.title() or "页面不存在" in cloud_page.inner_text("body"):
@@ -537,8 +697,22 @@ def process_single_article(context, browser, article_url, title):
                         except: pass
                     continue
 
+                # === 新增：云盘页面状态日志 ===
+                try:
+                    cloud_title = cloud_page.title()
+                    cloud_url = cloud_page.url
+                    print(f"      [云盘] 页面标题: {cloud_title[:50]}...")
+                    print(f"      [云盘] 当前URL: {cloud_url}")
+                except:
+                    pass
+
                 # 尝试登录
-                attempt_cloud_login(cloud_page, codes)
+                print(f"      [云盘] 检查是否需要密码...")
+                login_result = attempt_cloud_login(cloud_page, codes)
+                if login_result:
+                    print(f"      [云盘] 密码验证成功: {login_result}")
+                else:
+                    print(f"      [云盘] 无需密码或密码验证失败")
 
                 # 确定文件夹名称：只使用帖子标题
                 # 清理标题中的非法字符和日期后缀
@@ -572,7 +746,19 @@ def process_single_article(context, browser, article_url, title):
                 
                 # 执行下载 (传入 cloud_page)
                 mode, files = download_content(cloud_page, local_path)
-                
+
+                # === 新增：统计下载结果 ===
+                if mode in ["zip_extracted", "zip_raw", "zip_file"]:
+                    STATS["download_success"] += 1
+                elif "page_anomaly" in mode:
+                    STATS["page_anomaly"] += 1
+                    STATS["download_failed"] += 1
+                elif mode == "no_zip_button":
+                    STATS["no_button"] += 1
+                    STATS["download_failed"] += 1
+                else:
+                    STATS["download_failed"] += 1
+
                 # 记录结果 (文件级别)
                 record = {
                     "title": title,
@@ -658,6 +844,23 @@ def run_spider():
         processed_urls = set()
 
         for i in range(MAX_SCROLL_ATTEMPTS):
+            # === 新增：每100个文章输出一次状态报告 ===
+            if len(processed_urls) > 0 and len(processed_urls) % 100 == 0:
+                print(f"\n{'='*60}")
+                print(f"[状态报告] 已处理 {len(processed_urls)} 篇文章")
+                print(f"[状态报告] 跳过已下载: {STATS['skipped_existing']}")
+                print(f"[状态报告] 当前循环次数: {i+1}/{MAX_SCROLL_ATTEMPTS}")
+                print(f"[状态报告] 连续无新内容次数: {no_change_counter}/{NO_NEW_DATA_LIMIT}")
+
+                # 检查Cookie是否仍然有效
+                try:
+                    current_cookies = context.cookies()
+                    print(f"[状态报告] 当前Cookie数量: {len(current_cookies)}")
+                except:
+                    print(f"[状态报告] Cookie检查失败")
+
+                print(f"{'='*60}\n")
+
             # 1. 扫描当前页面上的所有文章链接
             elements = page.locator("a[href*='/article/']").all()
 
@@ -710,6 +913,21 @@ def run_spider():
             except: pass
 
         print(f"--> 全部完成，结果已保存至: {OUTPUT_FILE}")
+
+        # === 新增：输出统计报告 ===
+        print(f"\n{'='*60}")
+        print(f"统计报告")
+        print(f"{'='*60}")
+        print(f"总文章数: {STATS['total_articles']}")
+        print(f"跳过已下载: {STATS['skipped_existing']}")
+        print(f"包含云盘链接的文章: {STATS['articles_with_cloud']}")
+        print(f"下载成功: {STATS['download_success']}")
+        print(f"下载失败: {STATS['download_failed']}")
+        print(f"  - 页面异常: {STATS['page_anomaly']}")
+        print(f"  - 找不到按钮: {STATS['no_button']}")
+        print(f"404错误: {STATS['404_errors']}")
+        print(f"{'='*60}\n")
+
         browser.close()
 
 if __name__ == "__main__":
